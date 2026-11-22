@@ -130,7 +130,19 @@ namespace PSB {
             return false;
 
         PSBFile file;
-        if(!file.loadPSBFile(path)) {
+        bool loaded = false;
+        try {
+            loaded = file.loadPSBFile(path);
+        } catch(const std::exception &ex) {
+            // Never let a malformed container escape into the storage layer.
+            if(getenv("KR2_PSB_DEBUG"))
+                fprintf(stderr, "[psb-lazy] rejected container '%s': %s\n",
+                        path.AsStdString().c_str(), ex.what());
+            return false;
+        } catch(...) {
+            return false;
+        }
+        if(!loaded) {
             if(getenv("KR2_PSB_DEBUG"))
                 fprintf(stderr, "[psb-lazy] cannot load container '%s'\n",
                         path.AsStdString().c_str());

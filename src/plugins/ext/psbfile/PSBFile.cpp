@@ -554,7 +554,26 @@ namespace PSB {
             return false;
         }
 
-        if(!loadFromStream(_stream.get())) {
+        // Kirikinux2: loadFromStream() reports a malformed container by
+        // throwing (parsePSBHeader), and that used to escape through the
+        // storage media into TJS as a fatal script error.  A file that is not
+        // a PSB container must simply fail to load -- the caller decides what
+        // to do, e.g. psb:// lookups falling back to "not found".
+        try {
+            if(!loadFromStream(_stream.get())) {
+                _stream.reset();
+                return false;
+            }
+        } catch(const std::exception &ex) {
+            if(getenv("KR2_PSB_DEBUG"))
+                fprintf(stderr, "[psb-load] rejected %s: %s\n",
+                        filePath.AsStdString().c_str(), ex.what());
+            _stream.reset();
+            return false;
+        } catch(...) {
+            if(getenv("KR2_PSB_DEBUG"))
+                fprintf(stderr, "[psb-load] rejected %s: unknown exception\n",
+                        filePath.AsStdString().c_str());
             _stream.reset();
             return false;
         }

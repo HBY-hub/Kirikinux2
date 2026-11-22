@@ -49,8 +49,13 @@ namespace PSB {
             return decompressLz4Stream(input);
         }
 
+        // MDF containers use "MDF\0" or "mdf\0" depending on the exporter
+        // (the KR ports ship lower-case).  Compare case-insensitively, like the
+        // reference implementation does, or every .scn/.mdf scenario is
+        // rejected as "Not a valid PSB file".
         sign[3] = '\0';
-        if(std::memcmp(sign, "MDF", 3) == 0) {
+        if((sign[0] | 0x20) == 'm' && (sign[1] | 0x20) == 'd' &&
+           (sign[2] | 0x20) == 'f') {
             input->SetPosition(4);
             return decompressMdfStream(input, readSize);
         }
