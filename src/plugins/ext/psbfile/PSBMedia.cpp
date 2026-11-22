@@ -5,6 +5,9 @@
 #include "../kr2_plugin_log.h"
 
 #include "PSBMedia.h"
+#include "PSBMediaRegistry.h"
+#include <cstdio>
+#include <cstdlib>
 
 #include "UtilStreams.h"
 #include "MsgIntf.h"
@@ -55,11 +58,39 @@ namespace PSB {
     }
 
     bool PSBMedia::CheckExistentStorage(const ttstr &name) {
-        return find(name) != nullptr;
+        if(find(name) != nullptr)
+            return true;
+        // The engine asks this before Open(), so the lazy container load has to
+        // happen here as well -- otherwise Open() is never reached.
+        return ensureLoaded(name) && find(name) != nullptr;
+    }
+
+    bool PSBMedia::ensureLoaded(const ttstr &name) {
+        const std::string key = name.AsStdString();
+        const auto slash = key.find('/');
+        if(slash == std::string::npos || slash == 0)
+            return false;
+        const ttstr container(key.substr(0, slash).c_str());
+        return loadContainer(container);
     }
 
     tTJSBinaryStream *PSBMedia::Open(const ttstr &name, tjs_uint32 flags) {
         const PSBResource *found = find(name);
+        if(found == nullptr && ensureLoaded(name))
+            found = find(name);
+        if(found == nullptr && getenv("KR2_PSB_DEBUG")) {
+            // Which containers are registered, and under which keys?  This is
+            // what distinguishes "the data pack was never loaded" from "the
+            // data pack was loaded but the key path is different".
+            fprintf(stderr, "[psb-miss] '%s' registry=%zu\n",
+                    name.AsStdString().c_str(), _resources.size());
+            int shown = 0;
+            for(const auto &kv : _resources) {
+                if(shown++ >= 40)
+                    break;
+                fprintf(stderr, "[psb-miss]   %s\n", kv.first.c_str());
+            }
+        }
         if(found == nullptr) {
             // Kirikinux2: do not insert an empty resource for a miss.
             TVPThrowExceptionMessage(TJS_W("Cannot open storage %1"),

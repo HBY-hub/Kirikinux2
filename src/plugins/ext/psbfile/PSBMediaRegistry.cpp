@@ -4,6 +4,9 @@
 
 #include "PSBMedia.h"
 #include "PSBValue.h"
+#include <cstdio>
+#include <cstdlib>
+#include <unordered_set>
 #include "StorageIntf.h"
 
 namespace PSB {
@@ -110,6 +113,34 @@ namespace PSB {
         for(const auto &container : containers) {
             registerRootResourcesForContainer(container, root);
         }
+    }
+
+    bool loadContainer(const ttstr &path) {
+        if(path.IsEmpty())
+            return false;
+        std::string key = path.AsStdString();
+        // Never try to load a psb:// URL through psbfile itself (recursion).
+        if(key.find("://") != std::string::npos)
+            return false;
+        for(auto &c : key)
+            if(c >= 'A' && c <= 'Z')
+                c = static_cast<char>(c - 'A' + 'a');
+        static std::unordered_set<std::string> attempted;
+        if(!attempted.insert(key).second)
+            return false;
+
+        PSBFile file;
+        if(!file.loadPSBFile(path)) {
+            if(getenv("KR2_PSB_DEBUG"))
+                fprintf(stderr, "[psb-lazy] cannot load container '%s'\n",
+                        path.AsStdString().c_str());
+            return false;
+        }
+        registerRootResources(path, file);
+        if(getenv("KR2_PSB_DEBUG"))
+            fprintf(stderr, "[psb-lazy] registered container '%s'\n",
+                    path.AsStdString().c_str());
+        return true;
     }
 
     void registerRootResources(const ttstr &container, const PSBFile &file) {

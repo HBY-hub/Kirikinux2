@@ -5,6 +5,8 @@
 #include "PSBStreamDecompress.h"
 
 #include "PSBFile.h"
+#include <cstdio>
+#include <cstdlib>
 
 #include <iostream>
 #include <memory>
@@ -532,6 +534,8 @@ namespace PSB {
 
     bool PSBFile::loadPSBFile(const ttstr &filePath) {
         LOGGER->debug("load psb file: {}", filePath.AsStdString());
+        if(getenv("KR2_PSB_DEBUG"))
+            fprintf(stderr, "[psb-load] %s\n", filePath.AsStdString().c_str());
         auto *rawStream = TVPCreateStream(filePath);
         if(!rawStream) {
             return false;

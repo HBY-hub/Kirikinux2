@@ -41,6 +41,9 @@ namespace PSB {
 
     private:
         const PSBResource *find(const ttstr &name) const;
+        // psb://<container>/<key>: load <container> from ordinary storage on
+        // first use (see PSBMediaRegistry::loadContainer).
+        bool ensureLoaded(const ttstr &name);
         int _ref = 0;
         std::unordered_map<std::string, PSBResource> _resources;
     };
