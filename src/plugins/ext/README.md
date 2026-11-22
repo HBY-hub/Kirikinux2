@@ -40,3 +40,20 @@ Core additions required by these plugins (also from KrKr2):
 Build: CMakeLists.txt target krkr2plugin_ext (C++17), always linked with
 --whole-archive so ncbind self-registration survives.
 Logging: set KR2_PLUGIN_LOG=trace|debug|info|warn|error|off (default warn).
+
+## Additional ports (2026-11)
+
+Ported from the wamsoft upstream projects and from KiriKiri-LauncherC
+(https://github.com/xiaocongyu66/KiriKiri-LauncherC, MIT for its own changes,
+KiriKiri BSD-style for the plugin bodies).  Provenance is repeated in each
+file's header; keep it when redistributing.
+
+| Module name (Plugins.link) | Directory / file            | Upstream | Notes |
+|----------------------------|-----------------------------|----------|-------|
+| layerExBTOA.dll            | layerExBTOA/               | wamsoft/layerExBTOA | `fillAlpha` & alpha-channel helpers used by alpha movies |
+| layerExImage.dll           | layerExImage/              | wamsoft/layerExImage | light/colorize/modulate/noise/gaussianBlur; local buffer base (the engine's layerExBase has no software buffer) |
+| shrinkCopy.dll             | shrinkCopy/                | wamsoft | Layer.shrinkCopy / shrinkCopyFast |
+| layerExAreaAverage.dll     | layerExAreaAverage/        | wamsoft | Layer.stretchCopyAA |
+| layerExLongExposure.dll    | layerExLongExposure/       | wamsoft | Layer.initExposure/snapExposure/statExposure/copyExposure/termExposure |
+| AlphaMovie.dll             | alphamovie/                | wamsoft/AlphaMovie | .amv alpha video, own JPEG-ish decoder; used with layerExBTOA |
+| (module name stubs)        | pluginNameStubs/           | KiriKiri-LauncherC | registers empty modules (kagexopt/menu/msdfrender/wvdecoder/...) so `Plugins.link` succeeds; also provides `Window.menu` |
