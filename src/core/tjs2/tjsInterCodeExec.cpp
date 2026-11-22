@@ -33,9 +33,49 @@ static bool isDebuggerPresent() {
 #define IsDebuggerPresent isDebuggerPresent
 #endif // ENABLE_DEBUGGER
 #include <thread>
+#include <cstdio>
+#include <cstdlib>
 
 namespace TJS
 {
+//-----------------------------------------------------------
+// Kr2 diagnostic: report native member lookup failures together with the
+// class of the object that was asked.  Enabled with KR2_LOG_MISSING_MEMBER=1.
+//-----------------------------------------------------------
+static void KR2LogMissingMember(const tTJSVariant *objvar, const tjs_char *name, tjs_error hr)
+{
+	static int mode = -1;
+	if(mode < 0)
+	{
+		const char *e = getenv("KR2_LOG_MISSING_MEMBER");
+		mode = e ? atoi(e) : 0;
+	}
+	if(!mode) return;
+	iTJSDispatch2 *obj = objvar ? objvar->AsObjectNoAddRef() : NULL;
+	static const tjs_char *classnames[] = {
+		TJS_W("Layer"), TJS_W("Window"), TJS_W("System"), TJS_W("Font"),
+		TJS_W("Debug"), TJS_W("Console"), TJS_W("Storages"), TJS_W("Scripts"),
+		TJS_W("Timer"), TJS_W("AsyncTrigger"), TJS_W("VideoOverlay"),
+		TJS_W("Movie"), TJS_W("PSBFile"), TJS_W("EmotePlayer"),
+		TJS_W("Motion"), TJS_W("TextRender"), TJS_W("MenuItem"),
+		TJS_W("RegExp"), TJS_W("Dictionary"), TJS_W("Array"), NULL
+	};
+	const tjs_char *cls = TJS_W("(unknown)");
+	if(obj)
+	{
+		for(int i = 0; classnames[i]; i++)
+		{
+			if(TJS_SUCCEEDED(obj->IsInstanceOf(0, NULL, NULL, classnames[i], obj)))
+			{
+				cls = classnames[i];
+				break;
+			}
+		}
+	}
+	fprintf(stderr, "[kr2-gap] missing member '%ls' on class '%ls' (hr=0x%08x)\n",
+		name ? name : TJS_W("(null)"), cls, (unsigned)hr);
+	fflush(stderr);
+}
 //---------------------------------------------------------------------------
 // utility functions
 //---------------------------------------------------------------------------
@@ -1586,7 +1626,10 @@ void tTJSInterCodeContext::GetPropertyDirect(tTJSVariant *ra,
 		name->GetString(), name->GetHint(), TJS_GET_VM_REG_ADDR(ra, code[1]),
 			clo.ObjThis?clo.ObjThis:ra[-1].AsObjectNoAddRef());
 	if(TJS_FAILED(hr))
+	{
+		KR2LogMissingMember(ra_code2, TJS_GET_VM_REG(DataArea, code[3]).GetString(), hr);
 		TJSThrowFrom_tjs_error(hr, TJS_GET_VM_REG(DataArea, code[3]).GetString());
+	}
 }
 //---------------------------------------------------------------------------
 void tTJSInterCodeContext::SetPropertyDirect(tTJSVariant *ra,
@@ -1620,7 +1663,10 @@ void tTJSInterCodeContext::SetPropertyDirect(tTJSVariant *ra,
 			name->GetString(), name->GetHint(), TJS_GET_VM_REG_ADDR(ra, code[3]),
 				clo.ObjThis?clo.ObjThis:ra[-1].AsObjectNoAddRef());
 	if(TJS_FAILED(hr))
+	{
+		KR2LogMissingMember(ra_code1, TJS_GET_VM_REG(DataArea, code[2]).GetString(), hr);
 		TJSThrowFrom_tjs_error(hr, TJS_GET_VM_REG(DataArea, code[2]).GetString());
+	}
 }
 //---------------------------------------------------------------------------
 void tTJSInterCodeContext::GetProperty(tTJSVariant *ra, const tjs_int32 *code)
@@ -1680,7 +1726,11 @@ void tTJSInterCodeContext::GetPropertyIndirect(tTJSVariant *ra,
 			// TODO: verify here needs hint holding
 			hr = clo.PropGet(flags, *str, NULL, TJS_GET_VM_REG_ADDR(ra, code[1]),
 				clo.ObjThis?clo.ObjThis:ra[-1].AsObjectNoAddRef());
-			if(TJS_FAILED(hr)) TJSThrowFrom_tjs_error(hr, *str);
+			if(TJS_FAILED(hr))
+			{
+				KR2LogMissingMember(ra_code2, *str, hr);
+				TJSThrowFrom_tjs_error(hr, *str);
+			}
 		}
 		catch(...)
 		{
@@ -1743,7 +1793,11 @@ void tTJSInterCodeContext::SetPropertyIndirect(tTJSVariant *ra,
 				hr = clo.PropSet(flags,
 					*str, NULL, TJS_GET_VM_REG_ADDR(ra, code[3]),
 						clo.ObjThis?clo.ObjThis:ra[-1].AsObjectNoAddRef());
-			if(TJS_FAILED(hr)) TJSThrowFrom_tjs_error(hr, *str);
+			if(TJS_FAILED(hr))
+			{
+				KR2LogMissingMember(ra_code1, *str, hr);
+				TJSThrowFrom_tjs_error(hr, *str);
+			}
 		}
 		catch(...)
 		{
