@@ -3,6 +3,8 @@
 // source code url: https://github.com/wamsoft/windowEx
 //
 #include <cstdint>
+#include <cstdlib>
+#include <string>
 
 typedef unsigned long DWORD;
 
@@ -20,6 +22,14 @@ typedef unsigned long ULONG_PTR;
 #include "GraphicsLoaderIntf.h"
 #include "EventIntf.h"
 #include "WindowImpl.h"
+
+// Kirikinux2: X11 helpers (see windowEx_x11.cpp); the original used Win32's
+// EnumDisplayMonitors / GetCursorPos, which do not exist here.
+extern "C" int KR2X11ScreenWidth();
+extern "C" int KR2X11ScreenHeight();
+extern "C" int KR2X11CursorPos(int *x, int *y);
+extern "C" void KR2X11WarpCursor(int x, int y);
+
 
 #define NCB_MODULE_NAME TJS_W("windowEx.dll")
 #ifndef _WIN32
@@ -461,7 +471,21 @@ struct WindowEx {
     }
 
     // property maximized
-    static bool isMaximized(iTJSDispatch2 *obj) { return true; }
+    // Kirikinux2: there is no window manager state to query, so treat "the
+    // window covers the whole screen" as maximized.  Returning a constant here
+    // broke KR games that size their window from this flag.
+    static bool isMaximized(iTJSDispatch2 *obj) {
+        if(!obj)
+            return false;
+        ncbPropAccessor acc{ obj };
+        tjs_int width = acc.getIntValue(TJS_W("width"), 0);
+        tjs_int height = acc.getIntValue(TJS_W("height"), 0);
+        const int sw = KR2X11ScreenWidth();
+        const int sh = KR2X11ScreenHeight();
+        if(sw <= 0 || sh <= 0 || width <= 0 || height <= 0)
+            return false;
+        return width >= sw && height >= sh;
+    }
 
     static tjs_error getMaximized(tTJSVariant *r, tjs_int n, tTJSVariant **p,
                                   iTJSDispatch2 *obj) {
@@ -966,9 +990,10 @@ NCB_ATTACH_CLASS_WITH_HOOK(WindowEx, Window) {
     // RawCallback(TJS_W("maximizeBox"), &Class::getMaximizeBox,
     // &Class::setMaximizeBox, 0); RawCallback(TJS_W("minimizeBox"),
     // &Class::getMinimizeBox,      &Class::setMinimizeBox, 0);
-    // RawCallback(TJS_W("maximized"),           &Class::getMaximized,
-    // &Class::setMaximized, 0); RawCallback(TJS_W("minimized"),
-    // &Class::getMinimized,      &Class::setMinimized, 0);
+    RawCallback(TJS_W("maximized"), &Class::getMaximized, &Class::setMaximized,
+                0);
+    RawCallback(TJS_W("minimized"), &Class::getMinimized, &Class::setMinimized,
+                0);
     RawCallback(TJS_W("showRestore"), &Class::showRestore, 0);
     RawCallback(TJS_W("resetWindowIcon"), &Class::resetWindowIcon, 0);
     RawCallback(TJS_W("setWindowIcon"), &Class::setWindowIcon, 0);
@@ -1423,22 +1448,124 @@ NCB_ATTACH_CLASS_WITH_HOOK(PadEx, Pad) {
 ////////////////////////////////////////////////////////////////
 
 struct System {
+    // { x, y, w, h } sub-dictionary used by getDisplayMonitors/getMonitorInfo.
+    static void setRectDict(iTJSDispatch2 *dict, const tjs_char *name, int x,
+                            int y, int w, int h) {
+        iTJSDispatch2 *rect = TJSCreateDictionaryObject();
+        if(!rect)
+            return;
+        tTJSVariant v;
+        v = (tjs_int)x;
+        rect->PropSet(TJS_MEMBERENSURE, TJS_W("x"), nullptr, &v, rect);
+        v = (tjs_int)y;
+        rect->PropSet(TJS_MEMBERENSURE, TJS_W("y"), nullptr, &v, rect);
+        v = (tjs_int)w;
+        rect->PropSet(TJS_MEMBERENSURE, TJS_W("w"), nullptr, &v, rect);
+        v = (tjs_int)h;
+        rect->PropSet(TJS_MEMBERENSURE, TJS_W("h"), nullptr, &v, rect);
+        tTJSVariant rv(rect, rect);
+        rect->Release();
+        dict->PropSet(TJS_MEMBERENSURE, name, nullptr, &rv, dict);
+    }
+
+    // The whole X screen as a single monitor (multi-head would need Xinerama;
+    // the streaming container has one screen).
+    static iTJSDispatch2 *makeMonitorDict(bool withIntersect, int ix, int iy,
+                                          int iw, int ih) {
+        int sw = KR2X11ScreenWidth(), sh = KR2X11ScreenHeight();
+        if(sw <= 0 || sh <= 0)
+            return nullptr;
+        iTJSDispatch2 *dict = TJSCreateDictionaryObject();
+        if(!dict)
+            return nullptr;
+        tTJSVariant v;
+        v = ttstr(TJS_W("DISPLAY0"));
+        dict->PropSet(TJS_MEMBERENSURE, TJS_W("name"), nullptr, &v, dict);
+        v = (tjs_int)1;
+        dict->PropSet(TJS_MEMBERENSURE, TJS_W("primary"), nullptr, &v, dict);
+        setRectDict(dict, TJS_W("monitor"), 0, 0, sw, sh);
+        setRectDict(dict, TJS_W("work"), 0, 0, sw, sh);
+        if(withIntersect)
+            setRectDict(dict, TJS_W("intersect"), ix, iy, iw, ih);
+        return dict;
+    }
+
     static tjs_int getDoubleClickTime() { return -1; }
 
     static tjs_error getDisplayMonitors(tTJSVariant *result, tjs_int numparams,
                                         tTJSVariant **param,
                                         iTJSDispatch2 *objthis) {
+        if(numparams != 0 && numparams != 4)
+            return TJS_E_BADPARAMCOUNT;
+        if(result)
+            result->Clear();
+
+        int ix = 0, iy = 0, iw = KR2X11ScreenWidth(), ih = KR2X11ScreenHeight();
+        if(numparams == 4) {
+            int rx = (int)param[0]->AsInteger();
+            int ry = (int)param[1]->AsInteger();
+            int rw = (int)param[2]->AsInteger();
+            int rh = (int)param[3]->AsInteger();
+            int x1 = rx > 0 ? rx : 0;
+            int y1 = ry > 0 ? ry : 0;
+            int x2 = (rx + rw) < iw ? (rx + rw) : iw;
+            int y2 = (ry + rh) < ih ? (ry + rh) : ih;
+            if(x2 <= x1 || y2 <= y1)
+                return TJS_S_OK; // 交差しない
+            ix = x1;
+            iy = y1;
+            iw = x2 - x1;
+            ih = y2 - y1;
+        }
+
+        iTJSDispatch2 *dict = makeMonitorDict(true, ix, iy, iw, ih);
+        if(!dict)
+            return TJS_S_OK;
+        iTJSDispatch2 *array = TJSCreateArrayObject();
+        if(array) {
+            tTJSVariant dv(dict, dict);
+            array->PropSetByNum(TJS_MEMBERENSURE, 0, &dv, array);
+            if(result)
+                *result = tTJSVariant(array, array);
+            array->Release();
+        }
+        dict->Release();
         return TJS_S_OK;
     }
 
     static tjs_error getMonitorInfo(tTJSVariant *result, tjs_int numparams,
                                     tTJSVariant **param,
                                     iTJSDispatch2 *objthis) {
+        if(result)
+            result->Clear();
+        // One screen: always the primary monitor, whatever was asked for.
+        iTJSDispatch2 *dict = makeMonitorDict(false, 0, 0, 0, 0);
+        if(!dict)
+            return TJS_S_OK;
+        if(result)
+            *result = tTJSVariant(dict, dict);
+        dict->Release();
         return TJS_S_OK;
     }
 
     static tjs_error getCursorPos(tTJSVariant *r, tjs_int n, tTJSVariant **p,
                                   iTJSDispatch2 *obj) {
+        if(r)
+            r->Clear();
+        int x = 0, y = 0;
+        if(KR2X11CursorPos(&x, &y)) {
+            iTJSDispatch2 *dict = TJSCreateDictionaryObject();
+            if(dict) {
+                tTJSVariant v;
+                v = (tjs_int)x;
+                dict->PropSet(TJS_MEMBERENSURE, TJS_W("x"), nullptr, &v, dict);
+                v = (tjs_int)y;
+                dict->PropSet(TJS_MEMBERENSURE, TJS_W("y"), nullptr, &v, dict);
+                if(r)
+                    *r = tTJSVariant(dict, dict);
+                dict->Release();
+            }
+        }
         return TJS_S_OK;
     }
 
@@ -1446,6 +1573,11 @@ struct System {
                                   iTJSDispatch2 *obj) {
         if(n < 2)
             return TJS_E_BADPARAMCOUNT;
+        KR2X11WarpCursor((int)p[0]->AsInteger(), (int)p[1]->AsInteger());
+        if(r) {
+            r->Clear();
+            *r = (tjs_int)1;
+        }
         return TJS_S_OK;
     }
 
@@ -1495,6 +1627,14 @@ struct System {
         ttstr name(p[0]->AsStringNoAddRef());
         if(name == TJS_W(""))
             return TJS_E_INVALIDPARAM;
+        // Kirikinux2: the stub returned void, which breaks callers that expect
+        // a string variable.
+        if(r) {
+            r->Clear();
+            const char *value = getenv(name.AsStdString().c_str());
+            if(value)
+                *r = ttstr(value);
+        }
         return TJS_S_OK;
     }
 
@@ -1502,6 +1642,29 @@ struct System {
                                      iTJSDispatch2 *objthis) {
         if(n < 1)
             return TJS_E_BADPARAMCOUNT;
+        if(r)
+            r->Clear();
+        ttstr src(p[0]->AsStringNoAddRef());
+        std::string text = src.AsStdString();
+        std::string out;
+        out.reserve(text.size());
+        for(size_t i = 0; i < text.size();) {
+            // %NAME% is the Windows syntax the original implements.
+            if(text[i] == '%') {
+                size_t end = text.find('%', i + 1);
+                if(end != std::string::npos && end > i + 1) {
+                    const std::string name = text.substr(i + 1, end - i - 1);
+                    const char *value = getenv(name.c_str());
+                    if(value)
+                        out += value;
+                    i = end + 1;
+                    continue;
+                }
+            }
+            out += text[i++];
+        }
+        if(r)
+            *r = ttstr(out.c_str());
         return TJS_S_OK;
     }
 
