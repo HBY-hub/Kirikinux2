@@ -965,6 +965,58 @@ tjs_error ScriptsAdd::safeEvalStorage(tTJSVariant *result, tjs_int numparams,
     return TJS_S_OK;
 }
 //----------------------------------------------------------------------
+//----------------------------------------------------------------------
+// Member enumeration for API auditing.
+//
+// Scripts.getObjectKeys() only walks plain TJS objects; native class objects
+// (Layer, Window, System, ...) are not enumerable from script.  This helper
+// goes through iTJSDispatch2::EnumMembers() so the whole native API surface
+// can be dumped from TJS:
+//
+//     var names = Scripts.getMemberNames(Layer);
+//
+namespace {
+class MemberNameCollector : public tTJSDispatch {
+public:
+    iTJSDispatch2 *Array = nullptr;
+    tjs_int Count = 0;
+
+    tjs_error TJS_INTF_METHOD
+    FuncCall(tjs_uint32 flag, const tjs_char *membername, tjs_uint32 *hint,
+             tTJSVariant *result, tjs_int numparams, tTJSVariant **param,
+             iTJSDispatch2 *objthis) override {
+        if(numparams >= 1 && param[0]->Type() == tvtString) {
+            tTJSVariant value = *param[0];
+            Array->PropSetByNum(TJS_MEMBERENSURE, Count++, &value, Array);
+        }
+        if(result)
+            *result = (tjs_int)1;
+        return TJS_S_OK;
+    }
+};
+} // namespace
+
+static tjs_error getMemberNames(tTJSVariant *result, tjs_int numparams,
+                                tTJSVariant **param,
+                                iTJSDispatch2 *objthis) {
+    if(numparams < 1 || param[0]->Type() != tvtObject)
+        return TJS_E_INVALIDPARAM;
+    iTJSDispatch2 *obj = param[0]->AsObjectNoAddRef();
+    if(!obj)
+        return TJS_E_INVALIDPARAM;
+    iTJSDispatch2 *array = TJSCreateArrayObject();
+    if(!array)
+        return TJS_E_FAIL;
+    MemberNameCollector collector;
+    collector.Array = array;
+    tTJSVariantClosure closure(&collector, static_cast<iTJSDispatch2 *>(nullptr));
+    obj->EnumMembers(TJS_IGNOREPROP, &closure, obj);
+    if(result)
+        *result = tTJSVariant(array, array);
+    array->Release();
+    return TJS_S_OK;
+}
+
 NCB_ATTACH_CLASS(ScriptsAdd, Scripts) {
     RawCallback(TJS_W("getObjectKeys"), &ScriptsAdd::getKeys, TJS_STATICMEMBER);
     RawCallback(TJS_W("getObjectCount"), &ScriptsAdd::getCount,
@@ -974,6 +1026,7 @@ NCB_ATTACH_CLASS(ScriptsAdd, Scripts) {
     NCB_METHOD(equalStruct);
     NCB_METHOD(equalStructNumericLoose);
     RawCallback(TJS_W("foreach"), &ScriptsAdd::foreach, TJS_STATICMEMBER);
+    RawCallback(TJS_W("getMemberNames"), &getMemberNames, TJS_STATICMEMBER);
     RawCallback(TJS_W("getMD5HashString"), &ScriptsAdd::getMD5HashString,
                 TJS_STATICMEMBER);
     NCB_METHOD(clone);
