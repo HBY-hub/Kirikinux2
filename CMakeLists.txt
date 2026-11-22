@@ -161,7 +161,26 @@ if(KR2_WITH_BLEND2D AND EXISTS "${KR2_BLEND2D_DIR}/src/blend2d.h")
   set(BLEND2D_TEST OFF CACHE BOOL "" FORCE)
   set(BLEND2D_DEMOS OFF CACHE BOOL "" FORCE)
   set(BLEND2D_NO_INSTALL ON CACHE BOOL "" FORCE)
+  # blend2d defines _LARGEFILE64_SOURCE itself, but only inside api-build_p.h,
+  # i.e. after the C library headers of the translation unit have been read, so
+  # struct stat64 is never declared on glibc and filesystem.cpp fails to build.
+  # Define the feature test macros on the command line for blend2d's own sources
+  # only; the flags are restored right after the subdirectory is configured.
+  set(KR2_SAVED_C_FLAGS "${CMAKE_C_FLAGS}")
+  set(KR2_SAVED_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D_LARGEFILE64_SOURCE=1")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -D_LARGEFILE64_SOURCE=1")
+  # glibc: keep BL_FILE64_API defined when -D_LARGEFILE64_SOURCE comes from the
+  # command line (see the script; blend2d defines it too late otherwise).
+  execute_process(
+    COMMAND "${Python3_EXECUTABLE}" "${KR2_ROOT}/scripts/linux/patch-blend2d.py" "${KR2_BLEND2D_DIR}"
+    RESULT_VARIABLE _kr2_blend2d_patch_result)
+  if(NOT _kr2_blend2d_patch_result EQUAL 0)
+    message(FATAL_ERROR "scripts/linux/patch-blend2d.py failed on ${KR2_BLEND2D_DIR}")
+  endif()
   add_subdirectory("${KR2_BLEND2D_DIR}" "${CMAKE_BINARY_DIR}/blend2d" EXCLUDE_FROM_ALL)
+  set(CMAKE_C_FLAGS "${KR2_SAVED_C_FLAGS}")
+  set(CMAKE_CXX_FLAGS "${KR2_SAVED_CXX_FLAGS}")
   set(KR2_HAVE_BLEND2D ON)
 else()
   list(FILTER KR2_PLUGIN_EXT_SOURCES EXCLUDE REGEX "/layerExDraw/")

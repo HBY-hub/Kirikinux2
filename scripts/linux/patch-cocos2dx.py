@@ -16,6 +16,8 @@ docs/linux-port.md; Kirikiroid2Yuri edited the krkr sources instead):
   3. FileUtilsLinux's private members are accessible to subclasses
      (CustomFileUtils derives from the platform FileUtils, like on Android).
   4. Explicit cstdint inclusion for GCC 13.
+  6. rapidjson GenericStringRef copy assignment, which GCC 14 rejects (the
+     bundled rapidjson is from 2018).
   5. Linux executable path fallback through AT_EXECFN when /proc is unavailable.
 """
 import pathlib
@@ -88,7 +90,21 @@ def file_utils_linux_impl(s):
     }''', 1)
 
 
+def rapidjson_stringref(s):
+    if '[kirikinux2] GCC 14' in s:
+        return s
+    old = '    GenericStringRef& operator=(const GenericStringRef& rhs) { s = rhs.s; length = rhs.length; }\n'
+    if old not in s:
+        return None
+    return s.replace(
+        old,
+        '    // [kirikinux2] GCC 14 rejects assigning the const members; copy assignment\n'
+        '    // of a string reference is meaningless anyway (s and length are const).\n'
+        '    GenericStringRef& operator=(const GenericStringRef&) = delete;\n', 1)
+
+
 PATCHES = [
+    ("external/json/document.h", rapidjson_stringref),
     ("cocos/base/allocator/CCAllocatorBase.h", allocator_base),
     ("extensions/GUI/CCScrollView/CCScrollView.h", scroll_view),
     ("cocos/platform/CCImage.h", image),
