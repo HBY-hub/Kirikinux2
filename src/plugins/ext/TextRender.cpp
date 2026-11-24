@@ -1,3 +1,22 @@
+//---------------------------------------------------------------------------
+// Ported from 3c1u/TextRender -- "Drop-in replacement (WIP) for
+// TextRender.dll (Kirikiri plugin)".
+//   Copyright (c) 2020 Hikaru Terazono <3c1u@vulpesgames.tokyo>
+//   Dual-licensed under the MIT License or the Apache License 2.0,
+//   at your option.  See LICENSE.MIT / LICENSE.Apache upstream.
+// Adapted for Kirikinux2: ncbind plugin ABI, kr2_plugin_log, FontRasterizer.
+//
+// 公式 TextRender.dll の書式（TextRender.tjs より、上流ファイルのコメントから）:
+//   \n 改行 / \t タブ / \i インデント開始 / \r インデント解除
+//   \w 空白分進める / \k キー入力待ち / \x nul文字 / \文字 エスケープ
+//   [xxxx] ルビ（次の1文字） / [xxxx,個数] ルビ（次の複数文字）
+//   フォント: %f名前; %bX %iX %sX %eX %数値; %B %S %r
+//   スタイル: %C 中央 %R 右 %L 左 %p数値; ピッチ %n 太字斜体解除
+//   タイミング: %d数値; %a数値; %w数値; %t数値; %D数値; %D$ラベル;
+//   色: #rrggbb;  #; で既定色に戻す
+//   埋め込み: $変数;  画像文字: &画像名;
+// 未定義の指令は「字面」として描画する（公式プラグインの挙動に合わせる）。
+//---------------------------------------------------------------------------
 #include "ncbind.hpp"
 
 #include "kr2_plugin_log.h"
@@ -469,7 +488,10 @@ bool TextRenderBase::render(tTJSString text, int autoIndent, int diff, int all,
 
                 switch(ch) {
                     case 't': {
-                        ttstr faceName{};
+                        // %tNUM;  等待 NUM 毫秒（部分作品拿来控制停顿）
+                        // %tNAME; 切换字体（沿用上游 WIP 的写法，兼容旧作品）
+                        ttstr arg{};
+                        bool is_number = true;
 
                         while(true) {
                             if(!readchar(text, i, ch)) {
@@ -481,8 +503,23 @@ bool TextRenderBase::render(tTJSString text, int autoIndent, int diff, int all,
                             if(ch == ';')
                                 break;
 
-                            faceName += ch;
+                            if(arg.length() == 0 && ch != '-' &&
+                               !('0' <= ch && ch <= '9')) {
+                                is_number = false;
+                            }
+
+                            arg += ch;
                         }
+
+                        if(is_number) {
+                            // TODO: 真正的等待
+                            dbg_print(TVPFormatMessage(
+                                TJS_W("wait %1 ms (ignored)"), arg));
+                        } else {
+                            dbg_print(TVPFormatMessage(
+                                TJS_W("change font face name: %1"), arg));
+                        }
+
                         break;
                     }
                     case 'f': {
@@ -577,6 +614,12 @@ bool TextRenderBase::render(tTJSString text, int autoIndent, int diff, int all,
 
                         break;
                     }
+                    case 'n':
+                        // %n 关闭粗体与斜体（官方 TextRender 语义）
+                        dbg_print(TJS_W("unset bold and italic"));
+                        m_state.bold = false;
+                        m_state.italic = false;
+                        break;
                     case 'B': // TODO: Big
                         dbg_print(TJS_W("big font"));
                         break;
@@ -619,6 +662,15 @@ bool TextRenderBase::render(tTJSString text, int autoIndent, int diff, int all,
                         int value = 0;
                         read_integer(text, i, value);
                         // TODO: text speed
+                        break;
+                    }
+                    case 'a': {
+                        // %aNUM; 以绝对值（毫秒）指定显示速度
+                        int value = 0;
+                        read_integer(text, i, value);
+                        // TODO: text speed (absolute)
+                        dbg_print(TVPFormatMessage(
+                            TJS_W("text delay (absolute): %1"), value));
                         break;
                     }
                     case 'w': {
@@ -782,7 +834,7 @@ bool TextRenderBase::render(tTJSString text, int autoIndent, int diff, int all,
                     colour = (colour << 4) | c;
                 }
                 if(isNull)
-                    colour = 0xffffff;
+                    colour = static_cast<RgbColor>(m_default.chColor);
                 m_state.chColor = colour;
 
                 break;
