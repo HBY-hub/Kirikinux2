@@ -680,13 +680,16 @@ bool TextRenderBase::render(tTJSString text, int autoIndent, int diff, int all,
 
                         break;
                     }
+                    case ';':
+                        // 空指令 "%;" 表示一个字面百分号。原版 textrender 对
+                        // 未识别指令按字面输出，游戏文本里就有
+                        // 「…理智条极限%;好不好！」这种写法。
+                        pushCharacter('%');
+                        break;
                     default:
-                        TVPThrowExceptionMessage(
-                            TJS_W("TextRenderBase::render() failed to "
-                                  "parse: expected any of "
-                                  "'fbiseBSrCRLpdwD0123456789', found "
-                                  "'%1'"),
-                            ch);
+                        // 其它未识别指令同样按字面输出，避免整段文本抛异常
+                        pushCharacter('%');
+                        pushCharacter(ch);
                         break;
                 }
                 break;
