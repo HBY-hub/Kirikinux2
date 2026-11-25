@@ -473,6 +473,8 @@ static void read_integer(tTJSString const &str, size_t &i, int &value) {
 bool TextRenderBase::render(tTJSString text, int autoIndent, int diff, int all,
                             bool same) {
 
+    // Layer and other TextRender instances share this rasterizer.
+    updateFont();
     auto const len = text.GetLen();
 
     for(size_t i = 0; i < len; ++i) {
@@ -518,6 +520,8 @@ bool TextRenderBase::render(tTJSString text, int autoIndent, int diff, int all,
                         } else {
                             dbg_print(TVPFormatMessage(
                                 TJS_W("change font face name: %1"), arg));
+                            m_state.face = arg;
+                            updateFont();
                         }
 
                         break;
@@ -542,6 +546,7 @@ bool TextRenderBase::render(tTJSString text, int autoIndent, int diff, int all,
                             TJS_W("change font face name: %1"), faceName));
 
                         m_state.face = faceName;
+                        updateFont();
 
                         break;
                     }
@@ -559,6 +564,7 @@ bool TextRenderBase::render(tTJSString text, int autoIndent, int diff, int all,
                             dbg_print(TJS_W("unset bold"));
 
                         m_state.bold = flag;
+                        updateFont();
 
                         break;
                     }
@@ -576,6 +582,7 @@ bool TextRenderBase::render(tTJSString text, int autoIndent, int diff, int all,
                             dbg_print(TJS_W("unset italic (oblique)"));
 
                         m_state.italic = flag;
+                        updateFont();
 
                         break;
                     }
@@ -619,6 +626,7 @@ bool TextRenderBase::render(tTJSString text, int autoIndent, int diff, int all,
                         dbg_print(TJS_W("unset bold and italic"));
                         m_state.bold = false;
                         m_state.italic = false;
+                        updateFont();
                         break;
                     case 'B': // TODO: Big
                         dbg_print(TJS_W("big font"));
@@ -629,6 +637,7 @@ bool TextRenderBase::render(tTJSString text, int autoIndent, int diff, int all,
                     case 'r': // Reset
                         dbg_print(TJS_W("reset"));
                         resetFont();
+                        updateFont();
                         break;
                     case 'C': // TODO: Centre
                         dbg_print(TJS_W("centre"));
@@ -1101,6 +1110,7 @@ void TextRenderBase::updateFont() {
 
 void TextRenderBase::done() {
     dbg_print(TJS_W("flush character buffer"));
+    updateFont();
     flush();
 }
 

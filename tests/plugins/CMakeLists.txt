@@ -73,3 +73,14 @@ add_executable(psbmedia_harness psbmedia_harness.cpp harness_memstream.cpp harne
   ${P}/types/MmoType.cpp ${P}/types/ArchiveType.cpp ${P}/types/SoundArchiveType.cpp ${P}/resources/ImageMetadata.cpp)
 set_target_properties(psbmedia_harness PROPERTIES CXX_STANDARD 17 CXX_EXTENSIONS ON)
 target_link_libraries(psbmedia_harness PRIVATE harness_tjs ZLIB::ZLIB PkgConfig::LZ4 pthread)
+
+find_package(Freetype REQUIRED)
+find_file(KR2_TEST_LATIN_FONT NAMES DejaVuSans.ttf Arial.ttf
+  PATHS /usr/share/fonts/truetype/dejavu "/System/Library/Fonts/Supplemental")
+add_executable(font_metrics font_metrics.cpp harness_memstream.cpp
+  ${KR2_ROOT}/src/plugins/ncbind/ncbind.cpp ${KR2_ROOT}/src/plugins/ext/TextRender.cpp
+  ${C}/visual/FreeTypeFontRasterizer.cpp ${C}/visual/FreeType.cpp ${C}/visual/CharacterData.cpp)
+set_target_properties(font_metrics PROPERTIES CXX_STANDARD 17 CXX_EXTENSIONS ON)
+target_link_libraries(font_metrics PRIVATE harness_tjs Freetype::Freetype pthread)
+add_test(NAME font-metrics COMMAND font_metrics "${KR2_TEST_LATIN_FONT}"
+  "${KR2_ROOT}/cocos/kr2/Resources/DroidSansFallback.ttf")
