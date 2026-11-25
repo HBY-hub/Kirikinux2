@@ -11,8 +11,9 @@ class FreeTypeFontRasterizer : public FontRasterizer {
 	class tFreeTypeFace* Face; //!< Faceオブジェクト
 	class tFreeTypeFace* FaceFallback = nullptr;
 	class tTVPNativeBaseBitmap * LastBitmap;
-	tTVPFont CurrentFont;
-	void ApplyFallbackFace();
+	tFreeTypeFace *GetFallbackFace();
+	template <typename LoadGlyph>
+	tFreeTypeFace *LoadWithFallback(tjs_char ch, LoadGlyph load);
 
 public:
 	FreeTypeFontRasterizer();

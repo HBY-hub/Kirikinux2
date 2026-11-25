@@ -13,33 +13,22 @@
 extern void TVPUninitializeFreeFont();
 extern FontSystem* TVPFontSystem;
 extern const ttstr &TVPGetDefaultFontName();
-void FreeTypeFontRasterizer::ApplyFallbackFace()
+tFreeTypeFace *FreeTypeFontRasterizer::GetFallbackFace()
 {
-	if (!FaceFallback && Face && Face->GetFontName() != TVPGetDefaultFontName()) {
-		FaceFallback = new tFreeTypeFace(TVPGetDefaultFontName(), 0);
+	const ttstr &name = TVPGetDefaultFontName();
+	if (Face->GetFontName() == name) return nullptr;
+	if (!FaceFallback || FaceFallback->GetFontName() != name) {
+		auto *next = new tFreeTypeFace(name, 0);
+		delete FaceFallback;
+		FaceFallback = next;
 	}
-	if (!FaceFallback) return;
-	FaceFallback->SetHeight(CurrentFont.Height < 0 ? -CurrentFont.Height : CurrentFont.Height);
-	if (CurrentFont.Flags & TVP_TF_ITALIC) {
-		FaceFallback->SetOption(TVP_TF_ITALIC);
-	} else {
-		FaceFallback->ClearOption(TVP_TF_ITALIC);
+	FaceFallback->SetHeight(Face->GetHeight());
+	for (auto flag : {TVP_TF_ITALIC, TVP_TF_BOLD, TVP_TF_UNDERLINE, TVP_TF_STRIKEOUT,
+	                  TVP_FACE_OPTIONS_NO_ANTIALIASING, TVP_FACE_OPTIONS_NO_HINTING}) {
+		if (Face->GetOption(flag)) FaceFallback->SetOption(flag);
+		else FaceFallback->ClearOption(flag);
 	}
-	if (CurrentFont.Flags & TVP_TF_BOLD) {
-		FaceFallback->SetOption(TVP_TF_BOLD);
-	} else {
-		FaceFallback->ClearOption(TVP_TF_BOLD);
-	}
-	if (CurrentFont.Flags & TVP_TF_UNDERLINE) {
-		FaceFallback->SetOption(TVP_TF_UNDERLINE);
-	} else {
-		FaceFallback->ClearOption(TVP_TF_UNDERLINE);
-	}
-	if (CurrentFont.Flags & TVP_TF_STRIKEOUT) {
-		FaceFallback->SetOption(TVP_TF_STRIKEOUT);
-	} else {
-		FaceFallback->ClearOption(TVP_TF_STRIKEOUT);
-	}
+	return FaceFallback;
 }
 
 FreeTypeFontRasterizer::FreeTypeFontRasterizer() : RefCount(0), Face(NULL), LastBitmap(NULL) {
@@ -80,7 +69,6 @@ void FreeTypeFontRasterizer::ApplyFont( class tTVPNativeBaseBitmap *bmp, bool fo
 }
 //---------------------------------------------------------------------------
 void FreeTypeFontRasterizer::ApplyFont( const tTVPFont& font ) {
-	CurrentFont = font;
 	ttstr stdname = TVPFontSystem->GetBeingFont(font.Face);
 	// TVP_FACE_OPTIONS_NO_ANTIALIASING
 	// TVP_FACE_OPTIONS_NO_HINTING
@@ -129,15 +117,14 @@ void FreeTypeFontRasterizer::ApplyFont( const tTVPFont& font ) {
 }
 //---------------------------------------------------------------------------
 void FreeTypeFontRasterizer::GetTextExtent(tjs_char ch, tjs_int &w, tjs_int &h) {
-	if( Face ) {
-		tGlyphMetrics metrics;
-		if( Face->GetGlyphSizeFromCharcode( ch, metrics) ) {
-			w = metrics.CellIncX;
-			h = metrics.CellIncY;
-		} else {
-			w = Face->GetHeight();
-			h = w;
-		}
+	tGlyphMetrics metrics{};
+	if (Face && LoadWithFallback(ch, [&](tFreeTypeFace *face, tjs_char code) {
+		return face->GetGlyphSizeFromCharcode(code, metrics);
+	})) {
+		w = metrics.CellIncX;
+		h = metrics.CellIncY;
+	} else {
+		w = h = Face ? Face->GetHeight() : 0;
 	}
 }
 //---------------------------------------------------------------------------
@@ -151,6 +138,21 @@ static bool isUnicodeSpace(char16_t ch)
 		|| (ch >= 0x2000 && ch <= 0x200A) || ch == 0x2028 || ch == 0x2029 || ch == 0x202F
 		|| ch == 0x205F || ch == 0x3000;
 }
+
+// All three callers try the same faces and replacement characters. Return
+// the successful face so bounds and pixels can share the primary baseline.
+template <typename LoadGlyph>
+tFreeTypeFace *FreeTypeFontRasterizer::LoadWithFallback(tjs_char ch, LoadGlyph load) {
+	if (load(Face, ch)) return Face;
+	if (!isUnicodeSpace(ch)) {
+		auto *fallback = GetFallbackFace();
+		if (fallback && load(fallback, ch)) return fallback;
+	}
+	if (load(Face, Face->GetDefaultChar()) || load(Face, Face->GetFirstChar()))
+		return Face;
+	return nullptr;
+}
+
 //---------------------------------------------------------------------------
 tTVPCharacterData* FreeTypeFontRasterizer::GetBitmap( const tTVPFontAndCharacterData & font, tjs_int aofsx, tjs_int aofsy ) {
 	if( font.Antialiased ) {
@@ -165,22 +167,13 @@ tTVPCharacterData* FreeTypeFontRasterizer::GetBitmap( const tTVPFontAndCharacter
 		Face->SetOption( TVP_FACE_OPTIONS_NO_HINTING );
 		//Face->ClearOption( TVP_FACE_OPTIONS_FORCE_AUTO_HINTING );
 	}
-	tTVPCharacterData* data = Face->GetGlyphFromCharcode(font.Character);
-	if (!data && !isUnicodeSpace(font.Character)) {
-		ApplyFallbackFace();
-		if (FaceFallback) {
-			data = FaceFallback->GetGlyphFromCharcode(font.Character);
-		}
-	}
-	if( data == NULL ) {
-		data = Face->GetGlyphFromCharcode( Face->GetDefaultChar() );
-	}
-	if( data == NULL ) {
-		data = Face->GetGlyphFromCharcode( Face->GetFirstChar() );
-	}
-	if( data == NULL ) {
-		TVPThrowExceptionMessage( TVPFontRasterizeError );
-	}
+	tTVPCharacterData *data = nullptr;
+	auto *used = LoadWithFallback(font.Character, [&](tFreeTypeFace *face, tjs_char code) {
+		data = face->GetGlyphFromCharcode(code);
+		return data != nullptr;
+	});
+	if (!used) TVPThrowExceptionMessage(TVPFontRasterizeError);
+	if (used != Face) data->OriginY += Face->GetAscent() - used->GetAscent();
 
 	int cx = data->Metrics.CellIncX;
 	int cy = data->Metrics.CellIncY;
@@ -216,17 +209,16 @@ void FreeTypeFontRasterizer::GetGlyphDrawRect( const ttstr & text, tTVPRect& are
 
 	area.left = area.top = area.right = area.bottom = 0;
 	tjs_int offsetx = 0;
-	tjs_int offsety = 0;
 	tjs_uint len = text.length();
 	for( tjs_uint i = 0; i < len; i++ ) {
 		tjs_char ch = text[i];
 		tjs_int ax, ay;
 		tTVPRect rt(0,0,0,0);
-		bool result = Face->GetGlyphRectFromCharcode(rt,ch,ax,ay);
-		if( result == false ) result = Face->GetGlyphRectFromCharcode(rt,Face->GetDefaultChar(),ax,ay);
-		if( result == false ) result = Face->GetGlyphRectFromCharcode(rt,Face->GetFirstChar(),ax,ay);
-		if( result ) {
-			rt.add_offsets( offsetx, offsety );
+		auto *used = LoadWithFallback(ch, [&](tFreeTypeFace *face, tjs_char code) {
+			return face->GetGlyphRectFromCharcode(rt, code, ax, ay);
+		});
+		if (used) {
+			rt.add_offsets(offsetx, Face->GetAscent() - used->GetAscent());
 			if( i != 0 ) {
 				area.do_union( rt );
 			} else {
@@ -234,7 +226,6 @@ void FreeTypeFontRasterizer::GetGlyphDrawRect( const ttstr & text, tTVPRect& are
 			}
 		}
 		offsetx += ax;
-		offsety = 0;
 	}
 }
 
